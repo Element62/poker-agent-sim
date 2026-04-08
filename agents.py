@@ -19,7 +19,7 @@ You can ONLY see:
 You CANNOT see other players' cards.
 
 Respond with ONLY valid JSON in this exact format:
-{"action": "fold" | "check" | "call" | "raise"}
+{"action": "fold" | "check" | "call" | "raise", "private_thought": "your reasoning here"}
 
 Rules:
 - "fold": give up this hand
@@ -29,8 +29,10 @@ Rules:
 
 IMPORTANT: Use "check" when cost to call is 0. Use "call" when cost to call is greater than 0.
 
-Think about pot odds, hand strength, and position. Be strategic but decisive.
-Do NOT include any explanation — just the JSON."""
+For "private_thought": explain WHY you chose this action in 1-2 sentences.
+Base your reasoning ONLY on what you can see (your hand, the board, pot, action history).
+Do NOT guess or assume what other players have.
+Be honest and natural — this is your inner monologue."""
 
 
 def build_user_prompt(player_view: dict) -> str:
@@ -79,13 +81,14 @@ class PokerAgent:
         self.client = client
         self.model = model
 
-    def decide(self, player_view: dict) -> Action:
-        """Call OpenAI API to decide an action given the visible game state."""
+    def decide(self, player_view: dict) -> tuple[Action, str]:
+        """Call OpenAI API to decide an action given the visible game state.
+        Returns (action, private_thought)."""
         user_prompt = build_user_prompt(player_view)
 
         response = self.client.chat.completions.create(
             model=self.model,
-            max_tokens=50,
+            max_tokens=150,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
@@ -93,15 +96,16 @@ class PokerAgent:
         )
 
         raw = response.choices[0].message.content.strip()
-        return self._parse_action(raw)
+        return self._parse_response(raw)
 
-    def _parse_action(self, raw: str) -> Action:
-        """Parse the JSON response into an Action, with fallback."""
+    def _parse_response(self, raw: str) -> tuple[Action, str]:
+        """Parse the JSON response into (Action, private_thought), with fallback."""
+        thought = ""
         try:
             data = json.loads(raw)
             action_str = data.get("action", "call").lower()
+            thought = data.get("private_thought", "")
         except (json.JSONDecodeError, AttributeError):
-            # Try to extract action from raw text
             raw_lower = raw.lower()
             if "fold" in raw_lower:
                 action_str = "fold"
@@ -118,4 +122,4 @@ class PokerAgent:
             "call": Action.CALL,
             "raise": Action.RAISE,
         }
-        return action_map.get(action_str, Action.CALL)
+        return action_map.get(action_str, Action.CALL), thought

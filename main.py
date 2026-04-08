@@ -21,19 +21,29 @@ def print_divider(label: str = ""):
         print("─" * 50)
 
 
+# Position labels: players[0]=Button, players[1]=SB, players[2]=BB
+POSITIONS = {0: "BTN", 1: "SB", 2: "BB"}
+
+
+def player_label(gs: GameState, p: Player) -> str:
+    idx = gs.players.index(p)
+    return f"{p.name} ({POSITIONS[idx]})"
+
+
 def print_game_state(gs: GameState):
     print(f"  Board : {card_str(gs.board) if gs.board else '(none)'}")
     print(f"  Pot   : {gs.pot}")
     for p in gs.players:
         status = "FOLDED" if p.folded else "active"
-        print(f"  {p.name:12s} | chips: {p.chips:>5} | {status}")
+        label = player_label(gs, p)
+        print(f"  {label:18s} | chips: {p.chips:>5} | {status}")
 
 
 def print_hands(gs: GameState):
     """Show all hands (audience-only view)."""
     print("  [Audience view — hole cards]")
     for p in gs.players:
-        print(f"    {p.name}: {card_str(p.hand)}")
+        print(f"    {player_label(gs, p)}: {card_str(p.hand)}")
 
 
 # ── Betting round ────────────────────────────────────────────────────
@@ -50,7 +60,7 @@ def run_betting_round(gs: GameState, agents: dict[str, PokerAgent]):
 
         view = gs.get_player_view(player)
         agent = agents[player.name]
-        action = agent.decide(view)
+        action, thought = agent.decide(view)
 
         # If agent says "call" but there's nothing to call, convert to check
         cost_to_call = view["cost_to_call"]
@@ -71,7 +81,10 @@ def run_betting_round(gs: GameState, agents: dict[str, PokerAgent]):
         elif action == Action.RAISE:
             action_display += f" (+{gs.big_blind})"
 
-        print(f"  {player.name:12s} -> {action_display:20s} [pot: {gs.pot}]")
+        label = player_label(gs, player)
+        print(f"  {label:18s} -> {action_display:20s} [pot: {gs.pot}]")
+        if thought:
+            print(f'    "{thought}"')
 
 
 # ── Main game loop ───────────────────────────────────────────────────
@@ -80,9 +93,9 @@ def play_hand():
     client = OpenAI()  # reads OPENAI_API_KEY from env
 
     players = [
-        Player("Alice"),
-        Player("Bob"),
-        Player("Charlie"),
+        Player("Charlie"),  # Button
+        Player("Alice"),    # SB
+        Player("Bob"),      # BB
     ]
 
     agents = {
@@ -92,7 +105,7 @@ def play_hand():
     gs = GameState(players)
 
     print_divider("NEW HAND")
-    print("  Players: Alice (Dealer), Bob (SB), Charlie (BB)")
+    print("  Players: Charlie (BTN), Alice (SB), Bob (BB)")
     print(f"  Blinds: {gs.small_blind}/{gs.big_blind}\n")
 
     # Post blinds and deal
@@ -121,14 +134,14 @@ def play_hand():
     print_divider("RESULT")
     if gs.is_hand_over() and gs.street != Street.SHOWDOWN:
         winner = gs.get_winner()
-        print(f"  {winner.name} wins {gs.pot} chips (everyone else folded)")
+        print(f"  {player_label(gs, winner)} wins {gs.pot} chips (everyone else folded)")
     else:
         winner = gs.get_winner()
         print("  Final board: " + card_str(gs.board))
         print()
         for p in gs.get_active_players():
-            print(f"  {p.name}: {card_str(p.hand)}")
-        print(f"\n  {winner.name} wins {gs.pot} chips!")
+            print(f"  {player_label(gs, p)}: {card_str(p.hand)}")
+        print(f"\n  {player_label(gs, winner)} wins {gs.pot} chips!")
 
     winner.chips += gs.pot
     print_divider()
