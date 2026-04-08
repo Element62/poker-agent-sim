@@ -6,33 +6,60 @@ from openai import OpenAI
 from game import Action
 
 
-SYSTEM_PROMPT = """You are a poker player in a 3-player Texas Hold'em game.
-You will receive the current game state and must decide your action.
+SYSTEM_PROMPT = """你是一名三人德州扑克游戏中的玩家。
+你会收到当前的游戏状态，然后必须做出行动决策。
 
-You can ONLY see:
-- Your own hole cards
-- The community board cards
-- The pot size and current bet
-- The action history
-- Other players' chip counts and whether they folded
+你只能看到：
+- 你自己的底牌
+- 公共牌
+- 底池大小和当前下注
+- 行动历史
+- 其他玩家的筹码数和是否弃牌
 
-You CANNOT see other players' cards.
+你看不到其他玩家的底牌。
 
-Respond with ONLY valid JSON in this exact format:
-{"action": "fold" | "check" | "call" | "raise", "private_thought": "your reasoning here"}
+请仅以如下JSON格式回复：
+{{"action": "fold" | "check" | "call" | "raise", "private_thought": "你的内心想法"}}
 
-Rules:
-- "fold": give up this hand
-- "check": pass when there is no bet to match (cost to call is 0)
-- "call": match an existing bet (cost to call is greater than 0)
-- "raise": increase the bet by the big blind amount
+规则：
+- "fold"：弃牌
+- "check"：过牌（当不需要跟注时，即跟注费用为0）
+- "call"：跟注（当需要匹配已有下注时，即跟注费用大于0）
+- "raise"：加注一个大盲注的金额
 
-IMPORTANT: Use "check" when cost to call is 0. Use "call" when cost to call is greater than 0.
+重要：跟注费用为0时用"check"，跟注费用大于0时用"call"。
 
-For "private_thought": explain WHY you chose this action in 1-2 sentences.
-Base your reasoning ONLY on what you can see (your hand, the board, pot, action history).
-Do NOT guess or assume what other players have.
-Be honest and natural — this is your inner monologue."""
+"private_thought"要求：用1-2句话解释你为什么做出这个决定。
+只能基于你能看到的信息（你的底牌、公共牌、底池、行动历史）。
+不要猜测或假设其他玩家的底牌。
+用中文表达你的内心独白，风格要符合你的性格。
+
+你的性格：
+{personality}
+
+保持角色。让你的性格驱动你的决策和内心想法。"""
+
+
+PERSONALITIES = {
+    "Charlie": (
+        "你是一个疯狂的赌徒。你几乎每次都加注——翻牌前、翻牌后都无所谓。"
+        "过牌是懦夫的行为。你只在极少数情况下过牌或跟注来设陷阱。"
+        "你至少70%的时候都要加注。即使拿到烂牌，你也加注来吓跑对手。"
+        "你的内心独白要嚣张自大，觉得自己是牌桌上最强的，其他人都是菜鸡。"
+    ),
+    "Alice": (
+        "你是一个极其保守的玩家。不是顶级牌（大对子、强听牌或更好）你就弃牌。"
+        "你至少50%的时候会弃牌。当你决定玩的时候，你会加注来保护你的好牌——"
+        "你绝不会拿着好牌只是跟注。你的内心独白冷静、理性、精于计算——"
+        "你用概率和期望值来思考，对烂牌毫不留情地嫌弃。"
+    ),
+    "Bob": (
+        "你是一个不按常理出牌的疯子。你有时候拿着垃圾牌也加注，就为了看看会发生什么。"
+        "有时候你追不可能的听牌，跟注大额下注。你大约40%的时候凭直觉加注。"
+        "你的内心独白搞笑轻松——你把扑克当派对游戏，经常说'管他呢'、"
+        "'让牌神决定吧'之类的话。"
+    ),
+}
 
 
 def build_user_prompt(player_view: dict) -> str:
@@ -76,21 +103,25 @@ What is your action?"""
 class PokerAgent:
     """A poker-playing agent powered by OpenAI API."""
 
-    def __init__(self, name: str, client: OpenAI, model: str = "gpt-4o-mini"):
+    def __init__(self, name: str, personality: str, client: OpenAI, model: str = "gpt-4o-mini", temperature: float = 1.0):
         self.name = name
+        self.personality = personality
         self.client = client
         self.model = model
+        self.temperature = temperature
 
     def decide(self, player_view: dict) -> tuple[Action, str]:
         """Call OpenAI API to decide an action given the visible game state.
         Returns (action, private_thought)."""
         user_prompt = build_user_prompt(player_view)
+        system = SYSTEM_PROMPT.format(personality=self.personality)
 
         response = self.client.chat.completions.create(
             model=self.model,
             max_tokens=150,
+            temperature=self.temperature,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
         )

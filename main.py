@@ -4,7 +4,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 from game import GameState, Player, Action, Street
-from agents import PokerAgent
+from agents import PokerAgent, PERSONALITIES
 
 load_dotenv()
 
@@ -31,17 +31,17 @@ def player_label(gs: GameState, p: Player) -> str:
 
 
 def print_game_state(gs: GameState):
-    print(f"  Board : {card_str(gs.board) if gs.board else '(none)'}")
-    print(f"  Pot   : {gs.pot}")
+    print(f"  公共牌 : {card_str(gs.board) if gs.board else '（无）'}")
+    print(f"  底池   : {gs.pot}")
     for p in gs.players:
-        status = "FOLDED" if p.folded else "active"
+        status = "已弃牌" if p.folded else "在场"
         label = player_label(gs, p)
-        print(f"  {label:18s} | chips: {p.chips:>5} | {status}")
+        print(f"  {label:18s} | 筹码: {p.chips:>5} | {status}")
 
 
 def print_hands(gs: GameState):
     """Show all hands (audience-only view)."""
-    print("  [Audience view — hole cards]")
+    print("  【观众视角 — 底牌展示】")
     for p in gs.players:
         print(f"    {player_label(gs, p)}: {card_str(p.hand)}")
 
@@ -49,10 +49,14 @@ def print_hands(gs: GameState):
 # ── Betting round ────────────────────────────────────────────────────
 
 def run_betting_round(gs: GameState, agents: dict[str, PokerAgent]):
-    """Run a single betting round. Each active player acts once (simplified)."""
+    """Run a betting round. Loops until all active players have matched the current bet."""
     order = gs.get_betting_order()
+    # Queue of players who still need to act
+    action_queue = [p for p in order if not p.folded]
 
-    for player in order:
+    while action_queue:
+        player = action_queue.pop(0)
+
         if player.folded:
             continue
         if len(gs.get_active_players()) <= 1:
@@ -74,15 +78,23 @@ def run_betting_round(gs: GameState, agents: dict[str, PokerAgent]):
         raise_amount = gs.big_blind if action == Action.RAISE else 0
         gs.apply_action(player, action, raise_amount)
 
+        # If someone raises, everyone else still active needs to respond
+        if action == Action.RAISE:
+            for p in gs.get_betting_order():
+                if not p.folded and p.name != player.name and p not in action_queue:
+                    action_queue.append(p)
+
         # Display
-        action_display = action.value.upper()
-        if action == Action.CALL:
-            action_display += f" ({cost_to_call} chips)"
-        elif action == Action.RAISE:
-            action_display += f" (+{gs.big_blind})"
+        action_names = {
+            Action.FOLD: "弃牌",
+            Action.CHECK: "过牌",
+            Action.CALL: f"跟注 ({cost_to_call}筹码)",
+            Action.RAISE: f"加注 (+{gs.big_blind})",
+        }
+        action_display = action_names[action]
 
         label = player_label(gs, player)
-        print(f"  {label:18s} -> {action_display:20s} [pot: {gs.pot}]")
+        print(f"  {label:18s} -> {action_display:20s} [底池: {gs.pot}]")
         if thought:
             print(f'    "{thought}"')
 
@@ -98,23 +110,32 @@ def play_hand():
         Player("Bob"),      # BB
     ]
 
+    temperatures = {"Charlie": 1.2, "Alice": 0.4, "Bob": 1.4}
     agents = {
-        p.name: PokerAgent(p.name, client) for p in players
+        p.name: PokerAgent(p.name, PERSONALITIES[p.name], client, temperature=temperatures[p.name])
+        for p in players
     }
 
     gs = GameState(players)
 
-    print_divider("NEW HAND")
-    print("  Players: Charlie (BTN), Alice (SB), Bob (BB)")
-    print(f"  Blinds: {gs.small_blind}/{gs.big_blind}\n")
+    print_divider("新一手")
+    print("  玩家: Charlie (BTN), Alice (SB), Bob (BB)")
+    print(f"  盲注: {gs.small_blind}/{gs.big_blind}\n")
 
     # Post blinds and deal
     gs.post_blinds()
     gs.deal_hole_cards()
     print_hands(gs)
 
-    # Play through streets: preflop first, then advance + display for each subsequent street
-    print_divider("PREFLOP")
+    # Play through streets
+    street_names = {
+        Street.PREFLOP: "翻牌前",
+        Street.FLOP: "翻牌",
+        Street.TURN: "转牌",
+        Street.RIVER: "河牌",
+    }
+
+    print_divider(street_names[Street.PREFLOP])
     print_game_state(gs)
     print()
     run_betting_round(gs, agents)
@@ -123,25 +144,26 @@ def play_hand():
         if gs.is_hand_over():
             break
 
-        gs.advance_street()  # deals community cards
-        print_divider(next_street.value.upper())
-        print(f"  Dealt : {card_str(gs.board[-3:] if next_street == Street.FLOP else gs.board[-1:])}")
+        gs.advance_street()
+        print_divider(street_names[next_street])
+        new_cards = gs.board[-3:] if next_street == Street.FLOP else gs.board[-1:]
+        print(f"  发牌 : {card_str(new_cards)}")
         print_game_state(gs)
         print()
         run_betting_round(gs, agents)
 
     # Resolve winner
-    print_divider("RESULT")
+    print_divider("结果")
     if gs.is_hand_over() and gs.street != Street.SHOWDOWN:
         winner = gs.get_winner()
-        print(f"  {player_label(gs, winner)} wins {gs.pot} chips (everyone else folded)")
+        print(f"  {player_label(gs, winner)} 赢得 {gs.pot} 筹码（其他玩家全部弃牌）")
     else:
         winner = gs.get_winner()
-        print("  Final board: " + card_str(gs.board))
+        print("  最终公共牌: " + card_str(gs.board))
         print()
         for p in gs.get_active_players():
             print(f"  {player_label(gs, p)}: {card_str(p.hand)}")
-        print(f"\n  {player_label(gs, winner)} wins {gs.pot} chips!")
+        print(f"\n  {player_label(gs, winner)} 赢得 {gs.pot} 筹码！")
 
     winner.chips += gs.pot
     print_divider()
